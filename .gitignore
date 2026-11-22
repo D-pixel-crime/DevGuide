@@ -1,0 +1,57 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches and runtime scratch
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+
+# Test coverage and reporting artifacts
+.coverage
+.coverage.*
+htmlcov/
+test-results/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment configurations and secrets
+.env
+.env.*
+!.env.example
+
+# Local SQLite databases and journal files
+data/
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ChromaDB persistent vector storage
+chroma/
+chroma_data/
+.chroma/
+*.parquet
+
+# Logs
+*.log
+logs/
+
+# Operating System and Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local-only project planning and agent instructions
+/docs/
+/AGENTS.md
