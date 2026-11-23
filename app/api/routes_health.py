@@ -1,18 +1,16 @@
 """Health and readiness probe endpoints."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Request, Response, status
+
+from app.core.config import Settings, get_settings
+from app.db.sqlite import check_sqlite_readiness
 
 router = APIRouter(tags=["Health & Readiness"])
 
 EVALUATED_COMPONENTS = ("sqlite", "chromadb")
-
-
-def default_sqlite_check() -> str:
-    """Default SQLite check before storage layer initialization in Prompt 5."""
-    return "not_initialized"
 
 
 def default_chromadb_check() -> str:
@@ -20,10 +18,13 @@ def default_chromadb_check() -> str:
     return "not_initialized"
 
 
-def get_default_readiness_checks() -> dict[str, Callable[[], Any]]:
+def get_default_readiness_checks(
+    settings: Optional[Settings] = None,
+) -> dict[str, Callable[[], Any]]:
     """Return the default readiness check callables for local storage dependencies."""
+    target_settings = settings if settings is not None else get_settings()
     return {
-        "sqlite": default_sqlite_check,
+        "sqlite": lambda: check_sqlite_readiness(target_settings.SQLITE_PATH),
         "chromadb": default_chromadb_check,
     }
 
@@ -52,7 +53,8 @@ def readyz(request: Request, response: Response) -> dict[str, Any]:
         request.app.state, "readiness_checks", None
     )
     if checks_map is None:
-        checks_map = get_default_readiness_checks()
+        app_settings = getattr(request.app.state, "settings", None)
+        checks_map = get_default_readiness_checks(app_settings)
 
     results: dict[str, str] = {}
     all_ready = True

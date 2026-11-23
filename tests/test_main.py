@@ -392,3 +392,50 @@ def test_no_database_files_created_by_shell(tmp_path):
     # Storage paths must not be created by shell endpoints
     assert not db_file.exists()
     assert not chroma_dir.exists()
+
+
+def test_readyz_with_initialized_sqlite(tmp_path):
+    """Verify GET /readyz reports sqlite ok and chromadb not_initialized when SQLite is initialized."""
+    db_file = tmp_path / "devguide.db"
+    settings = Settings(
+        DATA_DIR=tmp_path,
+        SQLITE_PATH=db_file,
+        CHROMA_PATH=tmp_path / "chroma",
+    )
+    app = create_app(settings=settings)
+    with TestClient(app) as client:
+        assert db_file.is_file()
+        response = client.get("/readyz")
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "not_ready"
+        assert data["checks"] == {
+            "sqlite": "ok",
+            "chromadb": "not_initialized",
+        }
+
+
+def test_readyz_with_lifespan_initialization_failure(tmp_path):
+    """Verify GET /readyz reports sqlite error when lifespan initialization fails."""
+    blocking_file = tmp_path / "block"
+    blocking_file.write_text("blocked")
+    db_file = blocking_file / "devguide.db"
+
+    settings = Settings(
+        DATA_DIR=blocking_file,
+        SQLITE_PATH=db_file,
+        CHROMA_PATH=tmp_path / "chroma",
+    )
+    app = create_app(settings=settings)
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "not_ready"
+        assert data["checks"] == {
+            "sqlite": "error",
+            "chromadb": "not_initialized",
+        }
+
