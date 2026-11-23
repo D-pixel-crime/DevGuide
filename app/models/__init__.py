@@ -2,6 +2,12 @@
 
 from app.models.chunk import DocumentChunk, ExtractedDocument, ExtractedPage
 from app.models.document import Document
+from app.models.schemas import (
+    DocumentDeleteResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    ErrorResponse,
+)
 from app.models.upload import ValidatedUpload
 
 __all__ = [
@@ -10,4 +16,8 @@ __all__ = [
     "ExtractedPage",
     "ExtractedDocument",
     "DocumentChunk",
+    "DocumentResponse",
+    "DocumentListResponse",
+    "DocumentDeleteResponse",
+    "ErrorResponse",
 ]

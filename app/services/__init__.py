@@ -9,8 +9,11 @@ from app.services.embedding import (
     OpenAIEmbeddingAdapter,
 )
 from app.services.ingestion import (
+    ChromaDeletionError,
     ChunkingError,
     CorruptPDFError,
+    DeletionPartialConsistencyError,
+    DocumentDeletionResult,
     EmptyExtractionError,
     EmptyFileError,
     FileContentMismatchError,
@@ -18,8 +21,11 @@ from app.services.ingestion import (
     FileValidationError,
     ImageOnlyPDFError,
     IngestionError,
+    IngestionService,
+    IngestionStorageError,
     InvalidEncodingError,
     InvalidFilenameError,
+    PartialConsistencyError,
     TextExtractionError,
     UnsupportedFileTypeError,
     chunk_document,
@@ -30,7 +36,7 @@ from app.services.ingestion import (
 )
 
 __all__ = [
-    # Ingestion
+    # Ingestion exceptions & service
     "IngestionError",
     "FileValidationError",
     "UnsupportedFileTypeError",
@@ -44,6 +50,12 @@ __all__ = [
     "ImageOnlyPDFError",
     "EmptyExtractionError",
     "ChunkingError",
+    "IngestionStorageError",
+    "PartialConsistencyError",
+    "ChromaDeletionError",
+    "DeletionPartialConsistencyError",
+    "DocumentDeletionResult",
+    "IngestionService",
     "validate_filename",
     "validate_upload",
     "extract_text",

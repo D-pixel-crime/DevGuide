@@ -1,16 +1,29 @@
-"""Document upload validation, text extraction, and character chunking service."""
+"""Document upload validation, text extraction, character chunking, and ingestion orchestration."""
 
 import hashlib
 import pathlib
 import unicodedata
+import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Optional
 
 import pymupdf
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
+from app.core.logging import get_logger
+from app.db.chroma import ChromaAdapter, ChunkRecord, ChromaStorageError
+from app.db.repository import (
+    DocumentNotFoundError,
+    DocumentRepository,
+    DuplicateDocumentError,
+)
 from app.models.chunk import DocumentChunk, ExtractedDocument, ExtractedPage
+from app.models.document import Document
 from app.models.upload import ValidatedUpload
+from app.services.embedding import OpenAIEmbeddingAdapter
+
+logger = get_logger("app.services.ingestion")
 
 # Supported file extensions
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".pdf", ".md", ".txt"})
@@ -94,6 +107,31 @@ class EmptyExtractionError(TextExtractionError):
 
 class ChunkingError(IngestionError, ValueError):
     """Raised when chunking parameters are invalid or chunking fails."""
+
+
+class IngestionStorageError(IngestionError):
+    """Raised when storage operations fail during document ingestion."""
+
+
+class PartialConsistencyError(IngestionStorageError):
+    """Raised when Chroma vectors persist but SQLite registration and cleanup fails."""
+
+
+class ChromaDeletionError(IngestionError):
+    """Raised when ChromaDB vector deletion fails during document deletion."""
+
+
+class DeletionPartialConsistencyError(IngestionError):
+    """Raised when Chroma vectors were deleted but SQLite metadata deletion failed."""
+
+
+@dataclass(frozen=True)
+class DocumentDeletionResult:
+    """Result of a document deletion operation across ChromaDB and SQLite."""
+
+    id: str
+    deleted: bool
+    chunks_removed: int
 
 
 def validate_filename(filename: str) -> str:
@@ -459,3 +497,277 @@ def chunk_document(
             global_chunk_index += 1
 
     return all_chunks
+
+
+class IngestionService:
+    """Orchestration service for document ingestion, retrieval, and deletion.
+
+    Coordinates document upload validation, duplicate short-circuiting, text extraction,
+    deterministic chunking, vector embedding generation, ChromaDB vector indexing,
+    and SQLite metadata registration with partial failure compensation.
+    """
+
+    def __init__(
+        self,
+        repository: Optional[DocumentRepository] = None,
+        chroma_adapter: Optional[ChromaAdapter] = None,
+        embedding_adapter: Optional[OpenAIEmbeddingAdapter] = None,
+        settings: Optional[Settings] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
+    ) -> None:
+        """Initialize IngestionService with optional injectable dependencies."""
+        self._settings = settings if settings is not None else get_settings()
+        self._repository = (
+            repository
+            if repository is not None
+            else DocumentRepository(db_path=self._settings.SQLITE_PATH)
+        )
+        self._chroma_adapter = (
+            chroma_adapter
+            if chroma_adapter is not None
+            else ChromaAdapter(
+                chroma_path=self._settings.CHROMA_PATH,
+                settings=self._settings,
+            )
+        )
+        self._embedding_adapter = (
+            embedding_adapter
+            if embedding_adapter is not None
+            else OpenAIEmbeddingAdapter(settings=self._settings)
+        )
+        self._chunk_size = chunk_size
+        self._chunk_overlap = chunk_overlap
+
+    @property
+    def repository(self) -> DocumentRepository:
+        """Configured SQLite document repository."""
+        return self._repository
+
+    @property
+    def chroma_adapter(self) -> ChromaAdapter:
+        """Configured ChromaDB vector-store adapter."""
+        return self._chroma_adapter
+
+    @property
+    def embedding_adapter(self) -> OpenAIEmbeddingAdapter:
+        """Configured OpenAI embedding adapter."""
+        return self._embedding_adapter
+
+    @property
+    def chunk_size(self) -> int:
+        """Resolved character chunk size."""
+        if self._chunk_size is not None:
+            return self._chunk_size
+        return self._settings.CHUNK_SIZE
+
+    @property
+    def chunk_overlap(self) -> int:
+        """Resolved character chunk overlap."""
+        if self._chunk_overlap is not None:
+            return self._chunk_overlap
+        return self._settings.CHUNK_OVERLAP
+
+    def ingest_document(
+        self,
+        filename: str,
+        content: bytes | bytearray,
+    ) -> Document:
+        """Orchestrate end-to-end document ingestion.
+
+        Pipeline:
+        1. validate_upload: validates filename, size, file_type, content consistency, sha256.
+        2. Duplicate check by SHA-256 against SQLite; short-circuit before expensive embedding work.
+        3. extract_text: extracts text from PDF (PyMuPDF) or MD/TXT (UTF-8).
+        4. Generate document UUID.
+        5. chunk_document with document_id, preserving page boundaries.
+        6. Embed chunks using OpenAI embedding adapter.
+        7. Insert chunk records into ChromaDB vector store.
+        8. Register document metadata in SQLite documents table.
+           If Chroma vector insertion fails, SQLite metadata is never registered.
+           If Chroma succeeds but SQLite registration fails, attempt best-effort vector deletion.
+           If vector cleanup fails, report PartialConsistencyError.
+        9. Store document-level metadata only; never persist original upload bytes.
+
+        Args:
+            filename: Original uploaded filename.
+            content: Raw uploaded file bytes.
+
+        Returns:
+            Created typed Document instance.
+
+        Raises:
+            FileValidationError: If file validation checks fail.
+            DuplicateDocumentError: If document with identical SHA-256 already exists.
+            TextExtractionError: If text extraction fails.
+            ChunkingError: If chunking fails or produces zero chunks.
+            EmbeddingError: If embedding generation fails.
+            ChromaStorageError: If ChromaDB vector write fails.
+            PartialConsistencyError: If Chroma succeeds but SQLite fails and cleanup fails.
+            IngestionStorageError: If Chroma succeeds but SQLite registration fails and cleanup succeeds.
+        """
+        # 1. Validation
+        upload = validate_upload(
+            filename=filename,
+            content=content,
+            max_upload_mb=self._settings.MAX_UPLOAD_MB,
+        )
+
+        # 2. Duplicate check by SHA-256 before expensive extraction and embedding
+        existing_doc = self._repository.get_document_by_content_sha256(upload.content_sha256)
+        if existing_doc is not None:
+            raise DuplicateDocumentError(
+                f"Document with identical content SHA-256 hash already exists (ID: {existing_doc.id})"
+            )
+
+        # 3. Extraction
+        extracted_doc = extract_text(upload)
+
+        # 4. Generate document UUID
+        doc_id = str(uuid.uuid4())
+
+        # 5. Chunking
+        chunks = chunk_document(
+            extracted_doc,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            document_id=doc_id,
+        )
+        if not chunks:
+            raise EmptyExtractionError("Document produced 0 text chunks")
+
+        # 6. Embedding
+        texts = [chunk.text for chunk in chunks]
+        embeddings = self._embedding_adapter.embed_texts(texts)
+
+        # 7. Insert Chroma vectors
+        chunk_records = [
+            ChunkRecord.from_document_chunk(
+                chunk=chunk,
+                embedding=emb,
+                filename=upload.filename,
+                file_type=upload.file_type,
+            )
+            for chunk, emb in zip(chunks, embeddings)
+        ]
+        self._chroma_adapter.add_chunks(chunk_records)
+
+        # 8. Register SQLite metadata with compensation on failure
+        try:
+            doc = self._repository.create_document(
+                filename=upload.filename,
+                file_type=upload.file_type,
+                content_sha256=upload.content_sha256,
+                chunk_count=len(chunks),
+                document_id=doc_id,
+            )
+        except Exception as sql_exc:
+            logger.error(
+                "SQLite metadata insertion failed for document %s: %s. Initiating best-effort cleanup.",
+                doc_id,
+                type(sql_exc).__name__,
+            )
+            cleanup_failed = False
+            try:
+                self._chroma_adapter.delete_records_by_document(doc_id)
+                logger.info("Best-effort vector cleanup succeeded for document %s", doc_id)
+            except Exception as cleanup_exc:
+                cleanup_failed = True
+                logger.critical(
+                    "Best-effort vector cleanup failed for document %s: %s",
+                    doc_id,
+                    type(cleanup_exc).__name__,
+                )
+
+            if cleanup_failed:
+                raise PartialConsistencyError(
+                    "Partial consistency failure: vectors persisted in ChromaDB but SQLite metadata insertion failed and vector cleanup could not be completed"
+                ) from sql_exc
+
+            if isinstance(sql_exc, DuplicateDocumentError):
+                raise sql_exc
+
+            raise IngestionStorageError(
+                f"Failed to register document metadata in SQLite: {type(sql_exc).__name__}"
+            ) from sql_exc
+
+        return doc
+
+    def delete_document(self, document_id: str) -> DocumentDeletionResult:
+        """Delete a document and its corresponding vector chunks.
+
+        1. Verify existence in SQLite. Raises DocumentNotFoundError (404) if missing.
+        2. Delete Chroma vectors first using canonical doc.id. If Chroma deletion fails, abort and preserve SQLite metadata.
+        3. Delete SQLite metadata using canonical doc.id. If Chroma succeeds but SQLite fails, report PartialConsistencyError.
+        4. Return DocumentDeletionResult with canonical doc.id.
+
+        Args:
+            document_id: UUID string of the document to delete.
+
+        Returns:
+            DocumentDeletionResult with canonical lowercase id, deleted=True, and chunks_removed.
+
+        Raises:
+            DocumentNotFoundError: If document does not exist in SQLite.
+            ValueError: If document_id is not a valid UUID string.
+            ChromaDeletionError: If deleting vectors from ChromaDB fails.
+            DeletionPartialConsistencyError: If Chroma vectors deleted but SQLite deletion fails.
+        """
+        # 1. Existence check in SQLite (normalizes document_id into canonical lowercase UUID)
+        doc = self._repository.get_document(document_id)
+        canonical_id = doc.id
+
+        # 2. Delete Chroma vectors first using canonical doc.id
+        try:
+            chunks_removed = self._chroma_adapter.delete_records_by_document(canonical_id)
+        except Exception as chroma_exc:
+            logger.error(
+                "Failed to delete ChromaDB vectors for document %s: %s. Aborting metadata deletion.",
+                canonical_id,
+                type(chroma_exc).__name__,
+            )
+            raise ChromaDeletionError(
+                "Failed to delete vectors from ChromaDB. Document metadata deletion aborted."
+            ) from chroma_exc
+
+        # 3. Delete SQLite metadata using canonical doc.id
+        try:
+            self._repository.delete_document(canonical_id)
+        except Exception as sql_exc:
+            logger.critical(
+                "Partial consistency failure: vectors deleted from ChromaDB for document %s, but failed to delete SQLite metadata record: %s",
+                canonical_id,
+                type(sql_exc).__name__,
+            )
+            raise DeletionPartialConsistencyError(
+                "Partial consistency failure: vectors deleted from ChromaDB but failed to delete SQLite metadata record."
+            ) from sql_exc
+
+        return DocumentDeletionResult(
+            id=canonical_id,
+            deleted=True,
+            chunks_removed=chunks_removed,
+        )
+
+    def get_document(self, document_id: str) -> Document:
+        """Retrieve document metadata by document ID.
+
+        Args:
+            document_id: UUID string of the document.
+
+        Returns:
+            Document metadata model.
+
+        Raises:
+            DocumentNotFoundError: If document does not exist.
+            ValueError: If document_id is not a valid UUID string.
+        """
+        return self._repository.get_document(document_id)
+
+    def list_documents(self) -> list[Document]:
+        """List all indexed documents ordered newest first.
+
+        Returns:
+            List of Document metadata models.
+        """
+        return self._repository.list_documents()

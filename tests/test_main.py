@@ -353,7 +353,7 @@ def test_no_openai_initialization_on_startup_or_health():
 
 
 def test_api_v1_router_registered():
-    """Verify /api/v1 router is mounted on the application without business endpoints."""
+    """Verify /api/v1 router is mounted on the application with document endpoints registered."""
     app = create_app()
     client = TestClient(app)
 
@@ -362,13 +362,16 @@ def test_api_v1_router_registered():
     assert "/healthz" in openapi_paths
     assert "/readyz" in openapi_paths
 
-    # Confirm no business endpoints have been prematurely registered
-    assert "/api/v1/documents" not in openapi_paths
+    # Confirm documents endpoints are registered
+    assert "/api/v1/documents" in openapi_paths
+    assert "/api/v1/documents/{document_id}" in openapi_paths
+
+    # Confirm subsequent phase endpoints have not been prematurely registered
     assert "/api/v1/retrieve" not in openapi_paths
     assert "/api/v1/query" not in openapi_paths
 
     # Confirm unmapped /api/v1 routes return 404
-    response = client.get("/api/v1/documents")
+    response = client.get("/api/v1/unmapped")
     assert response.status_code == 404
 
 
