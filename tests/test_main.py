@@ -362,12 +362,12 @@ def test_api_v1_router_registered():
     assert "/healthz" in openapi_paths
     assert "/readyz" in openapi_paths
 
-    # Confirm documents endpoints are registered
+    # Confirm documents and retrieval endpoints are registered
     assert "/api/v1/documents" in openapi_paths
     assert "/api/v1/documents/{document_id}" in openapi_paths
+    assert "/api/v1/retrieve" in openapi_paths
 
     # Confirm subsequent phase endpoints have not been prematurely registered
-    assert "/api/v1/retrieve" not in openapi_paths
     assert "/api/v1/query" not in openapi_paths
 
     # Confirm unmapped /api/v1 routes return 404

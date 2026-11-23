@@ -7,6 +7,9 @@ from app.models.schemas import (
     DocumentListResponse,
     DocumentResponse,
     ErrorResponse,
+    RetrieveMatch,
+    RetrieveRequest,
+    RetrieveResponse,
 )
 from app.models.upload import ValidatedUpload
 
@@ -20,4 +23,7 @@ __all__ = [
     "DocumentListResponse",
     "DocumentDeleteResponse",
     "ErrorResponse",
+    "RetrieveRequest",
+    "RetrieveMatch",
+    "RetrieveResponse",
 ]

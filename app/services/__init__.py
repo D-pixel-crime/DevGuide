@@ -34,6 +34,13 @@ from app.services.ingestion import (
     validate_filename,
     validate_upload,
 )
+from app.services.retrieval import (
+    InvalidQueryError,
+    RetrievalError,
+    RetrievalResult,
+    RetrievalService,
+    RetrievedMatch,
+)
 
 __all__ = [
     # Ingestion exceptions & service
@@ -68,4 +75,10 @@ __all__ = [
     "EmbeddingProviderError",
     "InvalidEmbeddingResponseError",
     "OpenAIEmbeddingAdapter",
+    # Retrieval
+    "RetrievalError",
+    "InvalidQueryError",
+    "RetrievedMatch",
+    "RetrievalResult",
+    "RetrievalService",
 ]
