@@ -13,6 +13,7 @@ from app.api.routes_health import default_chromadb_check
 from app.api.routes_health import router as health_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
+from app.db.chroma import check_chroma_readiness
 from app.db.sqlite import check_sqlite_readiness, init_db
 
 logger = get_logger("app.main")
@@ -67,18 +68,21 @@ def create_app(
     # Store resolved settings in application state
     app.state.settings = resolved_settings
 
-    # Injectable readiness seam (defaults to SQLite actual check + ChromaDB not_initialized)
+    # Injectable readiness seam (defaults to SQLite actual check + ChromaDB check)
     def sqlite_readiness_wrapper() -> str:
         if getattr(app.state, "sqlite_init_error", None) is not None:
             return "error"
         return check_sqlite_readiness(resolved_settings.SQLITE_PATH)
+
+    def chroma_readiness_wrapper() -> str:
+        return check_chroma_readiness(resolved_settings.CHROMA_PATH)
 
     app.state.readiness_checks = (
         readiness_checks
         if readiness_checks is not None
         else {
             "sqlite": sqlite_readiness_wrapper,
-            "chromadb": default_chromadb_check,
+            "chromadb": chroma_readiness_wrapper,
         }
     )
 

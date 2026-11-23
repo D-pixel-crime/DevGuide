@@ -1,5 +1,13 @@
 """Application service layer."""
 
+from app.services.embedding import (
+    EmbeddingAuthenticationError,
+    EmbeddingError,
+    EmbeddingProviderError,
+    InvalidEmbeddingResponseError,
+    MissingApiKeyError,
+    OpenAIEmbeddingAdapter,
+)
 from app.services.ingestion import (
     ChunkingError,
     CorruptPDFError,
@@ -22,6 +30,7 @@ from app.services.ingestion import (
 )
 
 __all__ = [
+    # Ingestion
     "IngestionError",
     "FileValidationError",
     "UnsupportedFileTypeError",
@@ -40,4 +49,11 @@ __all__ = [
     "extract_text",
     "chunk_text",
     "chunk_document",
+    # Embedding
+    "EmbeddingError",
+    "MissingApiKeyError",
+    "EmbeddingAuthenticationError",
+    "EmbeddingProviderError",
+    "InvalidEmbeddingResponseError",
+    "OpenAIEmbeddingAdapter",
 ]

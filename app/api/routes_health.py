@@ -1,11 +1,13 @@
 """Health and readiness probe endpoints."""
 
+import pathlib
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import Settings, get_settings
+from app.db.chroma import check_chroma_readiness
 from app.db.sqlite import check_sqlite_readiness
 
 router = APIRouter(tags=["Health & Readiness"])
@@ -13,9 +15,11 @@ router = APIRouter(tags=["Health & Readiness"])
 EVALUATED_COMPONENTS = ("sqlite", "chromadb")
 
 
-def default_chromadb_check() -> str:
-    """Default ChromaDB check before storage layer initialization in Prompt 11."""
-    return "not_initialized"
+def default_chromadb_check(
+    chroma_path: Optional[Union[pathlib.Path, str]] = None,
+) -> str:
+    """Check ChromaDB readiness without creating storage paths as a side effect."""
+    return check_chroma_readiness(chroma_path)
 
 
 def get_default_readiness_checks(
@@ -25,7 +29,7 @@ def get_default_readiness_checks(
     target_settings = settings if settings is not None else get_settings()
     return {
         "sqlite": lambda: check_sqlite_readiness(target_settings.SQLITE_PATH),
-        "chromadb": default_chromadb_check,
+        "chromadb": lambda: check_chroma_readiness(target_settings.CHROMA_PATH),
     }
 
 
