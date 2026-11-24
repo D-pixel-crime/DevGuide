@@ -51,6 +51,11 @@ from app.services.ingestion import (
     validate_filename,
     validate_upload,
 )
+from app.services.query import (
+    QueryResult,
+    QueryService,
+    QueryServiceError,
+)
 from app.services.retrieval import (
     InvalidQueryError,
     RetrievalError,
@@ -114,4 +119,9 @@ __all__ = [
     "GenerationAuthenticationError",
     "GenerationProviderError",
     "InvalidGenerationResponseError",
+    # Query Orchestration
+    "QueryServiceError",
+    "QueryResult",
+    "QueryService",
 ]
+

@@ -90,3 +90,28 @@ class RetrieveResponse(BaseModel):
     has_relevant_context: bool
     retrieved_count: int
     matches: list[RetrieveMatch]
+
+
+class QueryRequest(BaseModel):
+    """Request payload for question answering."""
+
+    question: str = Field(
+        json_schema_extra={"maxLength": 1000},
+    )
+    top_k: Optional[StrictInt] = Field(
+        default=None,
+        json_schema_extra={"minimum": 1, "maximum": 10},
+    )
+
+
+class QueryResponse(BaseModel):
+    """Response payload for question answering with citations."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    question: str
+    answer: str
+    abstained: bool
+    retrieved_count: int
+    sources: list[QuerySource]
+
