@@ -7,6 +7,7 @@ from app.models.schemas import (
     DocumentListResponse,
     DocumentResponse,
     ErrorResponse,
+    QuerySource,
     RetrieveMatch,
     RetrieveRequest,
     RetrieveResponse,
@@ -26,4 +27,5 @@ __all__ = [
     "RetrieveRequest",
     "RetrieveMatch",
     "RetrieveResponse",
+    "QuerySource",
 ]

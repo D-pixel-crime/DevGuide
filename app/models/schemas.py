@@ -65,6 +65,21 @@ class RetrieveMatch(BaseModel):
     distance: float
 
 
+class QuerySource(BaseModel):
+    """Source object mapping deterministic citation label to document chunk metadata."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_label: str
+    document_id: str
+    filename: str
+    file_type: str
+    page_number: Optional[int] = None
+    chunk_index: int
+    distance: float
+    excerpt: str
+
+
 class RetrieveResponse(BaseModel):
     """Response payload for semantic retrieval without generation."""
 
